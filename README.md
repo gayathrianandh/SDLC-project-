@@ -1,1 +1,65 @@
-# SDLC-project-
+!pip install transformers torch gradio PyPDF2 -q
+import gradio as gr
+import torch
+from transformers import AutoTokenizer, AutoModelForCausalLM
+import PyPDF2
+import io
+
+# Load model and tokenizer
+model_name = "ibm-granite/granite-3.2-2b-instruct"
+tokenizer = AutoTokenizer.from_pretrained(model_name)
+model = AutoModelForCausalLM.from_pretrained(
+    model_name,
+    torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
+    device_map="auto" if torch.cuda.is_available() else None
+)
+
+if tokenizer.pad_token is None:
+    tokenizer.pad_token = tokenizer.eos_token
+
+def generate_response(prompt, max_length=1024):
+    inputs = tokenizer(prompt, return_tensors="pt", truncation=True, max_length=512)
+
+    if torch.cuda.is_available():
+        inputs = {k: v.to(model.device) for k, v in inputs.items()}
+
+    with torch.no_grad():
+        outputs = model.generate(
+            **inputs,
+            max_length=max_length,
+            temperature=0.7,
+            do_sample=True,
+            pad_token_id=tokenizer.eos_token_id
+        )
+
+    response = tokenizer.decode(outputs[0], skip_special_tokens=True)
+    response = response.replace(prompt, "").strip()
+    return response
+
+def concept_explanation(concept):
+    prompt=f"Explain the concept of{concept}in detail with examples:"
+    return generate_response(prompt,max_length=800)
+
+def quiz_generate(concept):
+    prompt=f"Generate 5 quiz questions about (concept) with different question types(multiple choice,true/false,short answer):,give me the answer at the end:"
+    return generate_response(prompt,max_length=1200)
+
+# Create Gradio interface
+with gr.Blocks() as app:
+    gr.Markdown("# Educational AI Assistant")
+    with gr.Tabs():
+        with gr.TabItem("Concept explanation"):
+          concept_input=gr.Textbox(label="Enter a concept",placeholder="e.g.,Machine Learning")
+          explain_btn=gr.Button("explain")
+          explanation_output=gr.Textbox(label="Explanation",lines=10)
+
+          explain_btn.click(concept_explanation, inputs=concept_input, outputs=explanation_output)
+
+        with gr.TabItem("Quiz Generator"):
+          quiz_input=gr.Textbox(label="Enter a Topic",placeholder="e.g.,Machine Learning")
+          quiz_btn=gr.Button("Generate Quiz")
+          quiz_output=gr.Textbox(label="Quiz_Questions&answers",lines=15)
+
+          quiz_btn.click(quiz_generate, inputs=quiz_input, outputs=quiz_output)
+
+app.launch(share=True)
